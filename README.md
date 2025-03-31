@@ -1,3 +1,8 @@
+# Braches
+
+1. GRPO variants: `git chechout my_test`
+2. Audio-text LLM reasoning: `git chechout mllm`
+
 <h1 style="text-align: center;">verl: Volcano Engine Reinforcement Learning for LLM</h1>
 
 [![GitHub Repo stars](https://img.shields.io/github/stars/volcengine/verl)](https://github.com/volcengine/verl/stargazers)
