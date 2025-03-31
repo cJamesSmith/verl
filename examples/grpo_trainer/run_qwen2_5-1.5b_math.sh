@@ -1,11 +1,3 @@
-# GRPO Variants
-
-Finetuning Qwen2.5-Math-1.5B.
-
-### Baseline
-
-`./examples/grpo_trainer/run_qwen2_5-1.5b_math.sh`:
-```bash
 set -x
 
 export VLLM_ATTENTION_BACKEND=XFORMERS
@@ -48,7 +40,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     algorithm.kl_ctrl.kl_coef=0.001 \
     trainer.critic_warmup=0 \
-    trainer.logger=['console','wandb'] \
+    trainer.logger=['console'] \
     trainer.project_name='verl_grpo' \
     trainer.experiment_name='qwen2_1.5b_math_baseline' \
     trainer.n_gpus_per_node=8 \
@@ -56,45 +48,3 @@ python3 -m verl.trainer.main_ppo \
     trainer.save_freq=-1 \
     trainer.test_freq=5 \
     trainer.total_epochs=15 $@
-```
-
-### Entropy Reward = 0
-
-Intuition: Diversity of LLM's completions.
-
-Modify `./examples/grpo_trainer/run_qwen2_5-1.5b_math.sh`:
-```bash
-...
-    actor_rollout_ref.actor.entropy_coeff=0 \
-...
-```
-
-### Group Reward Normalization Without std
-
-Intuition: Unbiased estimation of RL objective function.
-
-Modify `./verl/trainer/ppo/core_algos.py`:
-```python
-def compute_grpo_outcome_advantage(token_level_rewards: torch.Tensor,
-                                   eos_mask: torch.Tensor,
-                                   index: torch.Tensor,
-                                   epsilon: float = 1e-6):
-
-...
-...
-
-        for i in range(bsz):
-            # scores[i] = (scores[i] - id2mean[index[i]]) / (id2std[index[i]] + epsilon)
-            scores[i] = scores[i] - id2mean[index[i]]
-        scores = scores.unsqueeze(-1).tile([1, response_length]) * eos_mask
-
-    return scores, scores
-```
-
-### Token-Level Normalization
-
-Intuition: Analyze loss function (advantage function) when using micro batch (assuming micro_bs = 2).
-
-$$
-\underset{\text{verl's grpo}}{\frac{1}{2}\left(\frac{A_1}{|o_1|}+\frac{A_2}{|o_2|}\right)} > \underset{\text{full batch size}}{\frac{A_1+A_2}{|o_1|+|o_2|}}
-$$
