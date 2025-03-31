@@ -1,6 +1,6 @@
 # Braches
 
-1. GRPO variants: `git chechout my_test`
+1. GRPO variants: `git chechout mytest`
 2. Audio-text LLM reasoning: `git chechout mllm`
 
 <h1 style="text-align: center;">verl: Volcano Engine Reinforcement Learning for LLM</h1>
