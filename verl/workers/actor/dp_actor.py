@@ -300,7 +300,8 @@ class DataParallelPPOActor(BasePPOActor):
                     entropy_loss = verl_F.masked_mean(entropy, response_mask)
 
                     # compute policy loss
-                    policy_loss = pg_loss - entropy_loss * entropy_coeff
+                    # policy_loss = pg_loss - entropy_loss * entropy_coeff
+                    policy_loss = pg_loss - entropy_loss * entropy_coeff * (advantages.squeeze(1) > 0)
 
                     if self.config.use_kl_loss:
                         ref_log_prob = data['ref_log_prob']
