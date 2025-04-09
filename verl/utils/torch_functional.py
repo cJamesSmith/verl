@@ -115,9 +115,9 @@ def masked_sum(values, mask, axis=None):
     return (values * mask).sum(axis=axis)
 
 
-def masked_mean(values, mask, axis=None):
+def masked_mean(values, mask, axis=None, const=False):
     """Compute mean of tensor with a masked values."""
-    return (values * mask).sum(axis=axis) / (mask.sum(axis=axis) + 1e-8)
+    return (values * mask).sum(axis=axis) / (mask.sum(axis=axis) + 1e-8) if not const else (values * mask).sum(axis=axis) / mask.shape[-1]
     # return (values * mask).sum(axis=axis) / 1024  # TODO: constant norm
 
 
