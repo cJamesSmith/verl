@@ -5,6 +5,7 @@ CHECKPOINTS_DIR=ckpt # TODO: change to your own path
 
 # export VLLM_ATTENTION_BACKEND=XFORMERS  # vllm>=0.8
 
+# This setup is for a 8x40G node
 python3 -m verl.trainer.main_ppo \
  algorithm.adv_estimator=grpo \
  data.train_files=data/train/one_shot_rlvr/pi13_r128.parquet \
