@@ -17,7 +17,7 @@ import os
 import ray
 
 from verl import DataProto
-
+from verl.utils.reward_score import deepscaler
 
 def get_custom_reward_fn(config):
     import importlib.util
@@ -76,6 +76,9 @@ def load_reward_manager(config, tokenizer, num_examine, **reward_kwargs):
         raise NotImplementedError
 
     compute_score = get_custom_reward_fn(config)
+    if config.actor_rollout_ref.model.path.strip().startswith("Qwen") or 'llama' in config.actor_rollout_ref.model.path.lower() or config.actor_rollout_ref.model.use_think == False:
+        print("\nQwen or LLAMA---------------------------------\n")
+        compute_score = deepscaler.compute_score
     return reward_manager_cls(
         tokenizer=tokenizer,
         num_examine=num_examine,

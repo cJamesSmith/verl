@@ -1,0 +1,4 @@
+eval "$(wget -qO- https://download.sail.insea.io/conda-init.sh)"
+conda activate verl
+cd /home/aiops/chenxw/verl
+bash 1srl_scripts/training_1.5b_pi13_r128.sh
