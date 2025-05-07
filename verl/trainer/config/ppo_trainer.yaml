@@ -237,7 +237,7 @@ trainer:
   max_actor_ckpt_to_keep: null
   max_critic_ckpt_to_keep: null
   # The timeout for ray worker group to wait for the register center to be ready
-  ray_wait_register_center_timeout: 300
+  ray_wait_register_center_timeout: 3000
 
 ray_init:
   num_cpus: null # `None` means using all CPUs, which might cause hang if limited in systems like SLURM. Please set to a number allowed then.
