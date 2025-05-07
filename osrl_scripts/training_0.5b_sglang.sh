@@ -9,7 +9,6 @@ python3 -m verl.trainer.main_ppo \
  data.train_files=/home/aiops/chenxw/verl/data/train/one_shot_rlvr/pi1_r128.parquet \
  data.val_files=/home/aiops/chenxw/verl/data/test/math500.parquet \
  data.train_batch_size=128 \
- data.val_batch_size=530 \
  data.max_prompt_length=1024 \
  data.max_response_length=3072 \
  reward_model.reward_manager='naive' \
