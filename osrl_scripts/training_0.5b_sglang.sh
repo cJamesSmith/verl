@@ -37,9 +37,9 @@ python3 -m verl.trainer.main_ppo \
  trainer.project_name='verl_few_shot'\
  trainer.experiment_name='Qwen2.5-Math-0.5B-pi1_r128-verl'\
  trainer.val_before_train=True \
- trainer.n_gpus_per_node=8 \
+ trainer.n_gpus_per_node=4 \
  trainer.nnodes=2 \
- trainer.save_freq=50 \
+ trainer.save_freq=-1 \
  trainer.test_freq=5 \
  trainer.default_hdfs_dir=null \
  trainer.total_epochs=10

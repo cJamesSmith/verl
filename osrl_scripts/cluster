@@ -1,4 +1,36 @@
 eval "$(wget -qO- https://download.sail.insea.io/conda-init.sh)"
-conda activate verl
+conda activate verl-sg
 cd /home/aiops/chenxw/verl
 bash 1srl_scripts/training_1.5b_pi13_r128.sh
+
+
+---
+For ray:
+
+---
+cd /home/aiops/chenxw/verl
+pwd
+eval "$('/home/aiops/chenxw/miniconda3/bin/conda' 'shell.bash' 'hook')"
+echo $PATH
+conda env list
+conda activate verl-sg
+ray start --head --dashboard-host=0.0.0.0
+bash osrl_scripts/train.sh
+
+---
+cd /home/aiops/chenxw/verl
+pwd
+eval "$('/home/aiops/chenxw/miniconda3/bin/conda' 'shell.bash' 'hook')"
+echo $PATH
+conda env list
+conda activate verl-sg
+export MASTER=$(python -c "import socket; print(socket.gethostbyname(socket.gethostname().replace('worker', 'master')))")
+sleep 5
+echo ${MASTER}
+ray start --address="${MASTER}:6379"
+ray status
+sleep 5
+bash osrl_scripts/training_0.5b_sglang.sh
+
+---
+eval "$('./miniconda3/bin/conda' 'shell.bash' 'hook' 2> /dev/null)"

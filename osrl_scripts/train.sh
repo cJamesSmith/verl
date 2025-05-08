@@ -1,0 +1,1 @@
+python /home/aiops/chenxw/verl/osrl_scripts/train.py
