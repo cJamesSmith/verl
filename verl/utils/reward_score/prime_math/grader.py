@@ -278,13 +278,13 @@ def math_equal(
 
 def symbolic_equal(a, b, tolerance, timeout=10.0):
     def _parse(s):
-        for f in [parse_expr, parse_latex]:
-            try:
-                with time_limit(timeout):
-                    return f(s)
-            except Exception:
-                pass
-        return s
+        # for f in [parse_expr, parse_latex]:
+        #     try:
+        #         with time_limit(timeout):
+        #             return f(s)
+        #     except Exception:
+        #         pass
+        return parse_latex(s, backend="lark")
 
     a = _parse(a)
     b = _parse(b)

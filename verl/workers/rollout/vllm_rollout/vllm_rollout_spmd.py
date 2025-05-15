@@ -234,6 +234,7 @@ class vLLMRollout(BaseRollout):
         do_sample = prompts.meta_info.get("do_sample", True)
         is_validate = prompts.meta_info.get("validate", False)
         if not do_sample:
+            print("---------------------------------not do_sample---------------------------------")
             kwargs = {
                 "best_of": 1,
                 "top_p": 1.0,
@@ -243,6 +244,7 @@ class vLLMRollout(BaseRollout):
                 "n": 1,  # if greedy, only 1 response
             }
         elif is_validate:
+            print("---------------------------------is_validate---------------------------------")
             # TODO: try **
             kwargs = {
                 "top_k": self.config.val_kwargs.top_k,

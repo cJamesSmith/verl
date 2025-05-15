@@ -778,6 +778,11 @@ class RayPPOTrainer:
         with open(local_latest_checkpointed_iteration, "w") as f:
             f.write(str(self.global_steps))
 
+        # model merger
+        script = "scripts/model_merger.py"
+        args = ["--local_dir", actor_local_path, "--target_dir", os.path.join(self.config.trainer.default_local_dir, f"global_step_{self.global_steps}_hf"),  "--hf_model_path", self.config.actor_rollout_ref.model.path]
+        os.system('python ' + script + ' ' + ' '.join(args))
+
     def _load_checkpoint(self):
         if self.config.trainer.resume_mode == "disable":
             return 0
@@ -868,6 +873,7 @@ class RayPPOTrainer:
         # perform validation before training
         # currently, we only support validation using the reward_function.
         if self.val_reward_fn is not None and self.config.trainer.get("val_before_train", True):
+            breakpoint()
             val_metrics = self._validate()
             assert val_metrics, f"{val_metrics=}"
             pprint(f"Initial validation metrics: {val_metrics}")
@@ -1011,7 +1017,7 @@ class RayPPOTrainer:
                             norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
                             multi_turn=self.config.actor_rollout_ref.rollout.multi_turn.enable,
                         )
-
+                        breakpoint()
                     # update critic
                     if self.use_critic:
                         with _timer("update_critic", timing_raw):
