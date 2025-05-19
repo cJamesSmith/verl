@@ -15,11 +15,11 @@
 
 
 def _default_compute_score(data_source, solution_str, ground_truth, extra_info=None):
-    if data_source == "openai/gsm8k":
+    if False and data_source == "openai/gsm8k":
         from . import gsm8k
 
         res = gsm8k.compute_score(solution_str, ground_truth)
-    elif data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval", 'simplerl/math500', 'simplerl/math_level3to5', 'simplerl/aime24', 'Maxwell-Jia/AIME_2024', 'gneubig/aime-1983-2024']:
+    elif data_source in ["lighteval/MATH", "DigitalLearningGmbH/MATH-lighteval", 'simplerl/math_level3to5', 'simplerl/aime24', 'Maxwell-Jia/AIME_2024', 'gneubig/aime-1983-2024']:
         from . import math
 
         res = math.compute_score(solution_str, ground_truth)
@@ -53,6 +53,14 @@ def _default_compute_score(data_source, solution_str, ground_truth, extra_info=N
         from . import geo3k
 
         res = geo3k.compute_score(solution_str, ground_truth)
+    elif data_source in ["openai/gsm8k"]:
+        from . import deepscaler
+
+        res = deepscaler.compute_score(data_source=data_source, solution_str=solution_str, ground_truth=ground_truth)
+    elif data_source in ["deepscaler", 'simplerl/math500', "deepscaler_true"]:
+        from . import prime_math
+
+        res = prime_math.compute_score(solution_str, ground_truth)[0]
     else:
         raise NotImplementedError(f"Reward function is not implemented for {data_source=}")
 

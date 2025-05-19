@@ -1,7 +1,7 @@
 eval "$(wget -qO- https://download.sail.insea.io/conda-init.sh)"
 conda activate verl
 cd /home/aiops/chenxw/verl
-bash osrl_scripts/training_7b_pi1_r128.sh
+bash osrl_scripts/training_7b_pi1_r128.sh true_pi1_aime
 
 conda activate verl-sg
 
@@ -10,8 +10,7 @@ bash osrl_scripts/training_7b_pi1_r128.sh true_pi1_aime
 ---
 using model_merger.py
 
-python scripts/model_merger.py --local_dir checkpoints/verl_few_shot/Qwen2.5-Math-7B-true_pi1_aime/global_step_1/actor --target_dir checkpoints/verl_few_shot/Qwen2.5-Math-7B-true_pi1_aime/global_step_1_hf -
--hf_model_path /home/aiops/chenxw/hfmodels/Qwen2.5-Math-7B
+python scripts/model_merger.py --local_dir checkpoints/verl_few_shot/Qwen2.5-Math-7B-true_pi1_aime/global_step_1/actor --target_dir checkpoints/verl_few_shot/Qwen2.5-Math-7B-true_pi1_aime/global_step_1_hf --hf_model_path /home/aiops/chenxw/hfmodels/Qwen2.5-Math-7B
 
 ---
 For ray:

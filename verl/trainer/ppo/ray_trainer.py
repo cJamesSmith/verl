@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pprint import pprint
 from typing import Dict, Optional, Type
+import subprocess
 
 import numpy as np
 import ray
@@ -37,6 +38,7 @@ from omegaconf import OmegaConf, open_dict
 from torch.utils.data import Dataset, Sampler
 from torchdata.stateful_dataloader import StatefulDataLoader
 from tqdm import tqdm
+import wandb
 
 from verl import DataProto
 from verl.protocol import pad_dataproto_to_divisor, unpad_dataproto
@@ -622,6 +624,10 @@ class RayPPOTrainer:
             result = self.val_reward_fn(test_batch, return_dict=True)
             reward_tensor = result["reward_tensor"]
             scores = reward_tensor.sum(-1).cpu().tolist()
+            if self.config.actor_rollout_ref.rollout.val_kwargs.n > 1:
+                scores_tensor = torch.tensor(scores).reshape([-1, self.config.actor_rollout_ref.rollout.val_kwargs.n])
+                print(scores_tensor.mean(-1))
+                print(test_batch.non_tensor_batch['index'][::8])
             sample_scores.extend(scores)
 
             reward_extra_infos_dict["reward"].extend(scores)
@@ -663,6 +669,9 @@ class RayPPOTrainer:
                     pfx = f"{metric_sec}/{data_source}/{var_name}/{metric_name}"
                     metric_dict[pfx] = metric_val
 
+        # if self.config.actor_rollout_ref.rollout.val_kwargs.n > 1:
+        #     metric_dict[f'{metric_sec}/table'] = wandb.Table(columns=list(test_batch.non_tensor_batch['index'][::self.config.actor_rollout_ref.rollout.val_kwargs.n]), data=[scores_tensor.mean(-1).tolist()])
+        
         return metric_dict
 
     def init_workers(self):
@@ -779,9 +788,15 @@ class RayPPOTrainer:
             f.write(str(self.global_steps))
 
         # model merger
-        script = "scripts/model_merger.py"
-        args = ["--local_dir", actor_local_path, "--target_dir", os.path.join(self.config.trainer.default_local_dir, f"global_step_{self.global_steps}_hf"),  "--hf_model_path", self.config.actor_rollout_ref.model.path]
-        os.system('python ' + script + ' ' + ' '.join(args))
+        print(self.config.actor_rollout_ref.actor.checkpoint.contents)
+        # if self.config.trainer.save_hf == 1:
+        if "hf_model" in self.config.actor_rollout_ref.actor.checkpoint.contents:
+            print("Start Merging")
+            script = "scripts/model_merger.py"
+            args = ["python", script, "--backend", "fsdp", "--local_dir", actor_local_path, "--target_dir", os.path.join(self.config.trainer.default_local_dir, f"global_step_{self.global_steps}_hf"),  "--hf_model_path", self.config.actor_rollout_ref.model.path]
+            # os.system(' '.join(args))
+            res = subprocess.run(args)
+            print(res)
 
     def _load_checkpoint(self):
         if self.config.trainer.resume_mode == "disable":
@@ -873,7 +888,9 @@ class RayPPOTrainer:
         # perform validation before training
         # currently, we only support validation using the reward_function.
         if self.val_reward_fn is not None and self.config.trainer.get("val_before_train", True):
-            breakpoint()
+            if self.config.actor_rollout_ref.rollout.val_kwargs.n > 1:
+                # breakpoint()
+                pass
             val_metrics = self._validate()
             assert val_metrics, f"{val_metrics=}"
             pprint(f"Initial validation metrics: {val_metrics}")
@@ -1017,7 +1034,7 @@ class RayPPOTrainer:
                             norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
                             multi_turn=self.config.actor_rollout_ref.rollout.multi_turn.enable,
                         )
-                        breakpoint()
+                        # breakpoint()
                     # update critic
                     if self.use_critic:
                         with _timer("update_critic", timing_raw):
