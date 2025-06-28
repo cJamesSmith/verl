@@ -1,0 +1,15 @@
+hydra:
+  searchpath:
+    - file://verl/trainer/config
+
+defaults:
+  - ppo_trainer
+  - _self_
+
+cure:
+  train_files: data/code/CodeContests_train.json
+  total_steps: 120
+  content_max_length: ${data.max_prompt_length}
+  sample:
+    max_ground_truth_test: 8
+    
