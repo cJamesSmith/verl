@@ -1,8 +1,8 @@
 import json
 import os
-from pathlib import Path
 import threading
 import uuid
+from pathlib import Path
 from pprint import pprint
 from typing import Dict, List
 
@@ -89,8 +89,8 @@ class CURERayPPOTrainer(RayPPOTrainer):
         case_sampler = SequentialSampler(case_train_dataset)
 
         return (
-            iter(StatefulDataLoader(dataset=code_train_dataset, batch_size=self.config.data.train_batch_size, drop_last=True, collate_fn=collate_fn, sampler=code_sampler)),
-            iter(StatefulDataLoader(dataset=case_train_dataset, batch_size=self.config.data.train_batch_size, drop_last=True, collate_fn=collate_fn, sampler=case_sampler)),
+            iter(DataLoader(dataset=code_train_dataset, batch_size=self.config.data.train_batch_size, drop_last=True, collate_fn=collate_fn, sampler=code_sampler)),
+            iter(DataLoader(dataset=case_train_dataset, batch_size=self.config.data.train_batch_size, drop_last=True, collate_fn=collate_fn, sampler=case_sampler)),
             selected_data,
         )
 
@@ -146,6 +146,7 @@ class CURERayPPOTrainer(RayPPOTrainer):
 
 
             batch: DataProto = DataProto.concat([code_batch, case_batch])  # TODO: we need to check if concat is right
+            print(f"len(batch): {len(batch)}")
             gen_batch = batch.pop(batch_keys=["input_ids", "attention_mask", "position_ids"], non_tensor_batch_keys=["raw_prompt_ids"])
             gen_batch.meta_info["do_sample"] = True
 
@@ -155,12 +156,14 @@ class CURERayPPOTrainer(RayPPOTrainer):
             with _timer("step", timing_raw):
                 # 1.1 Generate a batch
                 with _timer('gen', timing_raw):
+                    print("Starting generation")
                     if not self.async_rollout_mode:
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
                     else:
                         self.async_rollout_manager.wake_up()
                         gen_batch_output = self.async_rollout_manager.generate_sequences(gen_batch)
                         self.async_rollout_manager.sleep()
+                    print("Generation finished")
                     timing_raw.update(gen_batch_output.meta_info["timing"])
                     gen_batch_output.meta_info.pop("timing", None)
                 batch.non_tensor_batch["uid"] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))], dtype=object)
@@ -170,8 +173,45 @@ class CURERayPPOTrainer(RayPPOTrainer):
 
                 batch.batch["response_mask"] = compute_response_mask(batch)
 
+                code_batch, case_batch = batch.chunk(2)
+                reward_fn_kwargs = {
+                    'data': [code_batch, case_batch, selected_data],
+                    'tokenizer': self.tokenizer,
+                    'n_samples': self.config.actor_rollout_ref.rollout.n,
+                    'max_ground_truth_test': self.config.cure.sample.max_ground_truth_test,
+                    'step': self.global_steps,
+                }
+                with _timer("reward_fn", timing_raw):
+                    code_reward_tensor, case_reward_tensor = self.reward_fn(**reward_fn_kwargs)
+                
+                code_batch.batch['token_level_scores'] = code_reward_tensor
+                case_batch.batch['token_level_scores'] = case_reward_tensor
+
+                batch: DataProto = DataProto.concat([code_batch, case_batch])
+
+                token_level_scores = batch.batch['token_level_scores']
+
+                # idx = torch.where(token_level_scores.abs().sum(-1).view(-1, self.config.actor_rollout_ref.rollout.n).sum(-1))[0]
+                # if len(idx) == 0:
+                #     continue
+                # idx = torch.repeat_interleave(idx, self.config.actor_rollout_ref.rollout.n)
+                # idx *= self.config.actor_rollout_ref.rollout.n  # align with repeated responses in rollout
+                # batch = batch[idx]  # As the paper's original implementation, we only compute adv for non-zero token_level_scores
+
+                idx = torch.where(token_level_scores.abs().sum(-1)!=0)[0]
+                while len(idx) < self.actor_rollout_wg.world_size:
+                    idx = torch.cat([idx, idx])
+
+                batch = batch[idx]
+
+                batch_size = len(batch)
+                batch_size = batch_size // self.actor_rollout_wg.world_size * self.actor_rollout_wg.world_size
+                batch = batch[:batch_size]  # make sure the batch size is divisible by world size
+
                 # We DO NOT use balance_batch, because it will cause issue when calculate reward
                 # balence batch and reorder batch
+                # breakpoint()
+                self._balance_batch(batch, metrics=metrics)
 
                 batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
 
@@ -200,20 +240,6 @@ class CURERayPPOTrainer(RayPPOTrainer):
                 code_batch, case_batch = batch.chunk(2)
 
                 with _timer("adv", timing_raw):
-                    reward_fn_kwargs = {
-                        'data': [code_batch, case_batch, selected_data],
-                        'tokenizer': self.tokenizer,
-                        'n_samples': self.config.actor_rollout_ref.rollout.n,
-                        'max_ground_truth_test': self.config.cure.sample.max_ground_truth_test,
-                        'step': self.global_steps,
-                    }
-                    with _timer("reward_fn", timing_raw):
-                        code_reward_tensor, case_reward_tensor = self.reward_fn(**reward_fn_kwargs)
-                    
-                    code_batch.batch['token_level_scores'] = code_reward_tensor
-                    case_batch.batch['token_level_scores'] = case_reward_tensor
-
-                    batch = DataProto.concat([code_batch, case_batch])
 
                     # compute rewards. apply_kl_penalty if available
                     if self.config.algorithm.use_kl_in_reward:
@@ -223,33 +249,27 @@ class CURERayPPOTrainer(RayPPOTrainer):
                         batch.batch["token_level_rewards"] = batch.batch["token_level_scores"]
 
                     # compute advantages, executed on the driver process
+                    # norm_adv_by_std_in_grpo = self.config.algorithm.get("norm_adv_by_std_in_grpo", True)  # GRPO adv normalization factor
 
-                    norm_adv_by_std_in_grpo = self.config.algorithm.get("norm_adv_by_std_in_grpo", True)  # GRPO adv normalization factor
-
-                    token_level_scores = batch.batch['token_level_scores']
-                    idx = torch.where(token_level_scores.sum(-1)!=0)[0]
-                    batch = batch[idx]  # As the paper's original implementation, we only compute adv for non-zero token_level_scores
-                    
                     assert self.config.algorithm.adv_estimator == 'grpo', "Currently only GRPO is supported for CURE PPO, please set adv_estimator to 'grpo' in your config."
-                    batch = compute_advantage(
-                            batch,
-                            adv_estimator=self.config.algorithm.adv_estimator,
-                            gamma=self.config.algorithm.gamma,
-                            lam=self.config.algorithm.lam,
-                            num_repeat=self.config.actor_rollout_ref.rollout.n,
-                            norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
-                            multi_turn=self.config.actor_rollout_ref.rollout.multi_turn.enable,
-                            use_pf_ppo=self.config.algorithm.use_pf_ppo,
-                            pf_ppo_reweight_method=self.config.algorithm.pf_ppo.reweight_method,
-                            pf_ppo_weight_pow=self.config.algorithm.pf_ppo.weight_pow,
-                        )
+                    scores = batch.batch["token_level_rewards"].sum(dim=-1)
+                    scores = scores.unsqueeze(-1) * batch.batch["response_mask"]
+                    batch.batch["advantages"] = scores
+                    batch.batch["returns"] = scores
+                    # batch = compute_advantage(
+                    #         batch,
+                    #         adv_estimator=self.config.algorithm.adv_estimator,
+                    #         gamma=self.config.algorithm.gamma,
+                    #         lam=self.config.algorithm.lam,
+                    #         num_repeat=self.config.actor_rollout_ref.rollout.n,
+                    #         norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
+                    #         multi_turn=self.config.actor_rollout_ref.rollout.multi_turn.enable,
+                    #         use_pf_ppo=self.config.algorithm.use_pf_ppo,
+                    #         pf_ppo_reweight_method=self.config.algorithm.pf_ppo.reweight_method,
+                    #         pf_ppo_weight_pow=self.config.algorithm.pf_ppo.weight_pow,
+                    #     )
                 assert isinstance(batch, DataProto), "batch should be a DataProto object before backward pass"
-                # batch = DataProto(batch=batch.batch,
-                #                     non_tensor_batch=batch.non_tensor_batch,
-                #                     meta_info=batch.meta_info)
-                batch_size = len(batch)
-                batch_size = batch_size // self.actor_rollout_wg.world_size * self.actor_rollout_wg.world_size
-                batch = batch[:batch_size]  # make sure the batch size is divisible by world size
+
                 with _timer("update_actor", timing_raw):
                     batch.meta_info["multi_turn"] = self.config.actor_rollout_ref.rollout.multi_turn.enable
                     actor_output = self.actor_rollout_wg.update_actor(batch)
