@@ -159,7 +159,7 @@ class CURERayPPOTrainer(RayPPOTrainer):
                 with _timer('gen', timing_raw):
                     print("Starting generation")
                     gen_batch_output_list = []
-                    breakpoint()
+                    # breakpoint()
                     for i in range(len(gen_batch) // 8):
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch[i*8:(i+1)*8])
                         gen_batch_output_list.append(gen_batch_output)
