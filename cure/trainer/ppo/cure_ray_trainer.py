@@ -1,3 +1,4 @@
+import gc
 import json
 import os
 import threading
@@ -157,12 +158,21 @@ class CURERayPPOTrainer(RayPPOTrainer):
                 # 1.1 Generate a batch
                 with _timer('gen', timing_raw):
                     print("Starting generation")
-                    if not self.async_rollout_mode:
-                        gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
-                    else:
-                        self.async_rollout_manager.wake_up()
-                        gen_batch_output = self.async_rollout_manager.generate_sequences(gen_batch)
-                        self.async_rollout_manager.sleep()
+                    gen_batch_output_list = []
+                    breakpoint()
+                    for i in range(len(gen_batch) // 8):
+                        gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch[i*8:(i+1)*8])
+                        gen_batch_output_list.append(gen_batch_output)
+                        print(len(gen_batch_output_list))
+                    gen_batch_output = DataProto.concat(gen_batch_output_list)
+                    del gen_batch_output_list
+                    gc.collect()
+                    # if not self.async_rollout_mode:
+                    #     gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
+                    # else:
+                    #     self.async_rollout_manager.wake_up()
+                    #     gen_batch_output = self.async_rollout_manager.generate_sequences(gen_batch)
+                    #     self.async_rollout_manager.sleep()
                     print("Generation finished")
                     timing_raw.update(gen_batch_output.meta_info["timing"])
                     gen_batch_output.meta_info.pop("timing", None)
@@ -240,7 +250,7 @@ class CURERayPPOTrainer(RayPPOTrainer):
                 code_batch, case_batch = batch.chunk(2)
 
                 with _timer("adv", timing_raw):
-
+                    print("Start computing rewards and advantages")
                     # compute rewards. apply_kl_penalty if available
                     if self.config.algorithm.use_kl_in_reward:
                         batch, kl_metrics = apply_kl_penalty(batch, kl_ctrl=self.kl_ctrl_in_reward, kl_penalty=self.config.algorithm.kl_penalty)
@@ -256,6 +266,7 @@ class CURERayPPOTrainer(RayPPOTrainer):
                     scores = scores.unsqueeze(-1) * batch.batch["response_mask"]
                     batch.batch["advantages"] = scores
                     batch.batch["returns"] = scores
+                    print("Rewards and advantages computed successfully")
                     # batch = compute_advantage(
                     #         batch,
                     #         adv_estimator=self.config.algorithm.adv_estimator,
@@ -271,8 +282,10 @@ class CURERayPPOTrainer(RayPPOTrainer):
                 assert isinstance(batch, DataProto), "batch should be a DataProto object before backward pass"
 
                 with _timer("update_actor", timing_raw):
+                    print("Start updating actor")
                     batch.meta_info["multi_turn"] = self.config.actor_rollout_ref.rollout.multi_turn.enable
                     actor_output = self.actor_rollout_wg.update_actor(batch)
+                    print("Actor updated successfully")
                 actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                 metrics.update(actor_output_metrics)
 
