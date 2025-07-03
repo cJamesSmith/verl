@@ -35,14 +35,21 @@ class DatasetManager:
     def __init__(self):
         self.datasets = {
             "train": [],
+            "test": [],
         }
         self.locks = {
             "train": threading.Lock(),
+            "test": threading.Lock(),
         }
 
     def update_train_data(self, entries):
         with self.locks["train"]:
             self.datasets["train"].extend(entries)
+            return len(entries)
+        
+    def update_test_data(self, entries):
+        with self.locks["test"]:
+            self.datasets["test"].extend(entries)
             return len(entries)
 
     def get_dataset(self, name) -> List[Dict]:
@@ -53,6 +60,47 @@ class CURERayPPOTrainer(RayPPOTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.dataset_manager = DatasetManager.remote()
+
+    def _create_test_code_case_dataloader(self, data_len: int|None=None) -> DataLoader:
+        test_dataset = ray.get(self.dataset_manager.get_dataset.remote("test"))
+
+        # code dataloader TODO: directly use code data to build RLHFDataset
+        code_parquet_path = (Path(self.config.trainer.default_local_dir) / "code" / "test_code.parquet").as_posix()
+        case_parquet_path = (Path(self.config.trainer.default_local_dir) / "code" / "test_case.parquet").as_posix()
+        os.makedirs(os.path.dirname(code_parquet_path), exist_ok=True)
+
+        # Common parameters for get_code_io_data
+        gen_params = {
+            "data": test_dataset,
+            "target_data_len": data_len,
+            # "content_max_length": self.config.cure.content_max_length,
+            "code_parquet_path": code_parquet_path,
+            "case_parquet_path": case_parquet_path,
+            "split": "test",
+            "tokenizer": self.tokenizer,
+        }
+
+        selected_data = get_code_case_data(**gen_params)
+
+        code_test_dataset = RLHFDataset(
+            data_files=code_parquet_path,
+            tokenizer=self.tokenizer,
+            config=self.config.data,
+        )
+        case_test_dataset = RLHFDataset(
+            data_files=case_parquet_path,
+            tokenizer=self.tokenizer,
+            config=self.config.data,
+        )
+
+        code_sampler = SequentialSampler(code_test_dataset)
+        case_sampler = SequentialSampler(case_test_dataset)
+
+        return (
+            iter(DataLoader(dataset=code_test_dataset, batch_size=len(code_test_dataset), drop_last=False, collate_fn=collate_fn, sampler=code_sampler)),
+            iter(DataLoader(dataset=case_test_dataset, batch_size=len(case_test_dataset), drop_last=False, collate_fn=collate_fn, sampler=case_sampler)),
+            selected_data,
+        )
 
     def _create_train_code_case_dataloader(self, data_len: int) -> DataLoader:
         train_dataset = ray.get(self.dataset_manager.get_dataset.remote("train"))
@@ -100,6 +148,20 @@ class CURERayPPOTrainer(RayPPOTrainer):
         Overide the _create_dataloader method, we will create the dataloader in the fit method
         """
         return None
+    
+    def _validate(self):
+        gen_batch_output = self.actor_rollout_wg.generate_sequences(self.test_gen_batch)
+        code_batch, case_batch = gen_batch_output.chunk(2)
+        reward_fn_kwargs = {
+            'data': [code_batch, case_batch, self.test_data],
+            'tokenizer': self.tokenizer,
+            'n_samples': self.config.actor_rollout_ref.rollout.n,
+            'max_ground_truth_test': self.config.cure.sample.max_ground_truth_test,
+            'step': self.global_steps,
+            'train': False,  # Set train to False for validation
+        }
+        self.reward_fn(**reward_fn_kwargs)
+
 
     def fit(self):
         from omegaconf import OmegaConf
@@ -123,7 +185,10 @@ class CURERayPPOTrainer(RayPPOTrainer):
         # load the training dataset
         with open(self.config.cure.train_files) as file:
             train_dataset = json.load(file)  # for *.json file
+        with open(self.config.cure.test_files) as file:
+            test_dataset = json.load(file)  # for *.json file
         ray.get(self.dataset_manager.update_train_data.remote(train_dataset))
+        ray.get(self.dataset_manager.update_test_data.remote(test_dataset))
 
         # add tqdm
         progress_bar = tqdm(total=self.config.cure.total_steps, initial=self.global_steps, desc="Training Progress")
@@ -131,6 +196,22 @@ class CURERayPPOTrainer(RayPPOTrainer):
         # we start from step 1
         self.global_steps += 1
         last_val_metrics = None
+
+        test_code_dataloader, test_case_dataloader, self.test_data = self._create_test_code_case_dataloader()
+        code_batch_dict = next(test_code_dataloader)
+        case_batch_dict = next(test_case_dataloader)
+        code_batch: DataProto = DataProto.from_single_dict(code_batch_dict)
+        case_batch: DataProto = DataProto.from_single_dict(case_batch_dict)
+        test_batch: DataProto = DataProto.concat([code_batch, case_batch])
+        test_batch_len = len(test_batch)
+        test_batch_len = test_batch_len // self.actor_rollout_wg.world_size * self.actor_rollout_wg.world_size  # make sure the batch size is divisible by world size
+        # test_batch = test_batch[:test_batch_len]  # prevent the last batch from being too small
+        # test_batch = test_batch[:64]  # prevent the last batch from being too small
+        print(f"test batch size: {len(test_batch)}")
+        self.test_gen_batch = test_batch.select(batch_keys=["input_ids", "attention_mask", "position_ids"], non_tensor_batch_keys=["raw_prompt_ids"])
+        self.test_gen_batch.meta_info["do_sample"] = True
+        print("start validating")
+        self._validate()
 
         while self.global_steps < self.config.cure.total_steps:
             data_len = self.config.data.train_batch_size * 2 - 1  # TODO: prevent the last batch from being too small, be carefull
@@ -211,6 +292,9 @@ class CURERayPPOTrainer(RayPPOTrainer):
                 # batch = batch[idx]  # As the paper's original implementation, we only compute adv for non-zero token_level_scores
 
                 idx = torch.where(token_level_scores.abs().sum(-1)!=0)[0]
+                if len(idx) == 0:
+                    print("No valid samples found, skipping this step")
+                    continue
                 while len(idx) < self.actor_rollout_wg.world_size:
                     idx = torch.cat([idx, idx])
 
@@ -292,22 +376,9 @@ class CURERayPPOTrainer(RayPPOTrainer):
                 actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                 metrics.update(actor_output_metrics)
 
-                # Log rollout generations if enabled
-                rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
-                if rollout_data_dir:
-                    with _timer("dump_rollout_generations", timing_raw):
-                        print(batch.batch.keys())
-                        inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
-                        outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
-                        scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()
-                        self._dump_generations(
-                            inputs=inputs,
-                            outputs=outputs,
-                            scores=scores,
-                            reward_extra_infos_dict={},
-                            dump_path=rollout_data_dir,
-                        )
-                        
+                if self.val_reward_fn is not None and self.config.trainer.test_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.test_freq == 0):
+                    self._validate()
+
                 if self.config.trainer.save_freq > 0 and (is_last_step or self.global_steps % self.config.trainer.save_freq == 0):
                     with _timer("save_checkpoint", timing_raw):
                         self._save_checkpoint()
