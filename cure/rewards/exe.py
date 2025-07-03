@@ -121,9 +121,12 @@ def run_scripts_with_chunk(
 
 
 def execute_scripts(num_chunks):
-
-    with open("./outputs-execute.json", "r") as f:
-        data = json.load(f)
+    if train:
+        with open("./outputs-execute.json", "r") as f:
+            data = json.load(f)
+    else:
+        with open("./outputs-execute-test.json", "r") as f:
+            data = json.load(f)
 
     # get input lists
     index_list = []
@@ -259,7 +262,7 @@ def execute_scripts(num_chunks):
             ).item() / len(sub_test_table_i), "error"
             index_id += 1
 
-    with open("./results-execute.txt", "a") as f:
+    with open("./results-execute.txt" if train else "./results-execute-test.txt", "a") as f:
         # Save + print
         def save_and_print(text):
             print(text)
@@ -297,8 +300,9 @@ def execute_scripts(num_chunks):
         data[i]["all_case_bool_table"] = data[i]["all_case_bool_table"].tolist()
 
     # output the data
-    with open("./outputs-execute.json", "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    if train:
+        with open("./outputs-execute.json", "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
 
 
 # read the configurations and convert them to global variables
@@ -314,6 +318,11 @@ def parse_args():
         "--num_chunks", type=int, default=4*4*16*2
     )
     parser.add_argument(
+        "--train",
+        default=False,
+        action="store_true"
+    )
+    parser.add_argument(
         "--scale_tuple_list",
         type=ast.literal_eval,
         default=[(4, 4), (16, 16)],
@@ -322,6 +331,7 @@ def parse_args():
 
 
 args = parse_args()
+print(f"reward args: {args}")
 globals().update(vars(args))
 
 

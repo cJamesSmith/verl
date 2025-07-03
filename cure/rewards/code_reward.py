@@ -136,6 +136,7 @@ def code_reward_fn(
         n_samples: int = 16,
         max_ground_truth_test: int = 8,
         step: int = 0,
+        train: bool = True
     ) -> Tuple[torch.Tensor, Dict, List[Dict], List[Dict]]:
         """We will expand this function gradually based on the available datasets"""
 
@@ -176,17 +177,24 @@ def code_reward_fn(
             selected_data[idx // n_samples]["all_case_output"] = selected_data[idx // n_samples]["all_case_output"] + test_output
             selected_data[idx // n_samples]["case_response_length"].append(len(tokenizer.encode(case_text, add_special_tokens=False)))
 
-        with open("./outputs-execute.json", "w", encoding="utf-8") as f:
-            json.dump(selected_data, f, indent=2, ensure_ascii=False)
+        if train:
+            with open("./outputs-execute.json", "w", encoding="utf-8") as f:
+                json.dump(selected_data, f, indent=2, ensure_ascii=False)
+        else:
+            with open("./outputs-execute-test.json", "w", encoding="utf-8") as f:
+                json.dump(selected_data, f, indent=2, ensure_ascii=False)
 
         subprocess.run(
-            'python cure/rewards/exe.py',
+            f'python cure/rewards/exe.py {"--train" if train else ""}',
             shell=True,
             check=True,
         )  # TODO: use fusion sandbox
 
-        with open("./outputs-execute.json") as f:
-            data = json.load(f)
+        if train:
+            with open("./outputs-execute.json") as f:
+                data = json.load(f)
+        else:
+            return
 
         code_reward_tensor = torch.zeros_like(code_batch.batch['responses'], dtype=torch.float32)
         case_reward_tensor = torch.zeros_like(case_batch.batch['responses'], dtype=torch.float32)
