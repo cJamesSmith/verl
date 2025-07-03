@@ -846,10 +846,10 @@ class RayPPOTrainer:
             self.critic_wg.save_checkpoint(critic_local_path, critic_remote_path, self.global_steps, max_ckpt_to_keep=max_critic_ckpt_to_keep)
 
         # save dataloader
-        BaseCheckpointManager.local_mkdir(local_global_step_folder)
-        dataloader_local_path = os.path.join(local_global_step_folder, "data.pt")
-        dataloader_state_dict = self.train_dataloader.state_dict()
-        torch.save(dataloader_state_dict, dataloader_local_path)
+        # BaseCheckpointManager.local_mkdir(local_global_step_folder)
+        # dataloader_local_path = os.path.join(local_global_step_folder, "data.pt")
+        # dataloader_state_dict = self.train_dataloader.state_dict()
+        # torch.save(dataloader_state_dict, dataloader_local_path)
 
         # latest checkpointed iteration tracker (for atomic usage)
         local_latest_checkpointed_iteration = os.path.join(self.config.trainer.default_local_dir, "latest_checkpointed_iteration.txt")
@@ -900,12 +900,12 @@ class RayPPOTrainer:
 
         # load dataloader,
         # TODO: from remote not implemented yet
-        dataloader_local_path = os.path.join(global_step_folder, "data.pt")
-        if os.path.exists(dataloader_local_path):
-            dataloader_state_dict = torch.load(dataloader_local_path, weights_only=False)
-            self.train_dataloader.load_state_dict(dataloader_state_dict)
-        else:
-            print(f"Warning: No dataloader state found at {dataloader_local_path}, will start from scratch")
+        # dataloader_local_path = os.path.join(global_step_folder, "data.pt")
+        # if os.path.exists(dataloader_local_path):
+        #     dataloader_state_dict = torch.load(dataloader_local_path, weights_only=False)
+        #     self.train_dataloader.load_state_dict(dataloader_state_dict)
+        # else:
+        #     print(f"Warning: No dataloader state found at {dataloader_local_path}, will start from scratch")
 
     def _balance_batch(self, batch: DataProto, metrics, logging_prefix="global_seqlen"):
         """Reorder the data on single controller such that each dp rank gets similar total tokens"""
