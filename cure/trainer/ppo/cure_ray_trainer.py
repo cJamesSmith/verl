@@ -158,24 +158,26 @@ class CURERayPPOTrainer(RayPPOTrainer):
                 # 1.1 Generate a batch
                 with _timer('gen', timing_raw):
                     print("Starting generation")
-                    gen_batch_output_list = []
-                    # breakpoint()
-                    for i in range(len(gen_batch) // 8):
-                        gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch[i*8:(i+1)*8])
-                        gen_batch_output_list.append(gen_batch_output)
-                        print(len(gen_batch_output_list))
-                    gen_batch_output = DataProto.concat(gen_batch_output_list)
-                    del gen_batch_output_list
-                    gc.collect()
-                    # if not self.async_rollout_mode:
-                    #     gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
-                    # else:
-                    #     self.async_rollout_manager.wake_up()
-                    #     gen_batch_output = self.async_rollout_manager.generate_sequences(gen_batch)
-                    #     self.async_rollout_manager.sleep()
+
+                    # gen_batch_output_list = []
+                    # # breakpoint()
+                    # for i in range(len(gen_batch) // 8):
+                    #     gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch[i*8:(i+1)*8])
+                    #     gen_batch_output_list.append(gen_batch_output)
+                    #     print(len(gen_batch_output_list))
+                    # gen_batch_output = DataProto.concat(gen_batch_output_list)
+                    # del gen_batch_output_list
+                    # gc.collect()
+
+                    if not self.async_rollout_mode:
+                        gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
+                    else:
+                        self.async_rollout_manager.wake_up()
+                        gen_batch_output = self.async_rollout_manager.generate_sequences(gen_batch)
+                        self.async_rollout_manager.sleep()
                     print("Generation finished")
                     timing_raw.update(gen_batch_output.meta_info["timing"])
-                    gen_batch_output.meta_info.pop("timing", None)
+                    print("Generation timing:", gen_batch_output.meta_info.pop("timing", None))
                 batch.non_tensor_batch["uid"] = np.array([str(uuid.uuid4()) for _ in range(len(batch.batch))], dtype=object)
                 # repeat to align with repeated responses in rollout
                 batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
@@ -217,6 +219,7 @@ class CURERayPPOTrainer(RayPPOTrainer):
                 batch_size = len(batch)
                 batch_size = batch_size // self.actor_rollout_wg.world_size * self.actor_rollout_wg.world_size
                 batch = batch[:batch_size]  # make sure the batch size is divisible by world size
+                print(f"batch size after filtering: {len(batch)}")
 
                 # We DO NOT use balance_batch, because it will cause issue when calculate reward
                 # balence batch and reorder batch
