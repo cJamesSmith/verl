@@ -127,3 +127,5 @@ outputs
 outputs-execute.json
 data/code/CodeContests_train.json
 results-execute.txt
+outputs-execute-test.json
+results-execute-test.txt
