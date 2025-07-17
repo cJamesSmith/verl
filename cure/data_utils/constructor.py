@@ -17,21 +17,21 @@ def get_code_case_data(
     split: str,
     tokenizer: AutoTokenizer,
 ):
-    return_io_data = []
 
     probabilities = [1.0 / len(data)] * len(data)
 
     if target_data_len is not None:
         # Randomly select target_data_len entries from io_data
         if len(data) >= target_data_len:
-            selected_indices = random.choice(len(data), size=target_data_len, replace=False, p=probabilities)
+            selected_indices = random.choice(len(data), size=target_data_len, replace=False)
         else:
             # If not enough data, upsample with replacement
-            selected_indices = random.choice(len(data), size=target_data_len, replace=True, p=probabilities)
+            selected_indices = random.choice(len(data), size=target_data_len, replace=True)
     else:
         # If target_data_len is None, use all data
         selected_indices = list(range(len(data)))
 
+    return_io_data = []
     # Generate code parquet
     for idx in selected_indices:
         io_prompt = Template(system_prompts).render(

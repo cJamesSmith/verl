@@ -150,7 +150,19 @@ class CURERayPPOTrainer(RayPPOTrainer):
         return None
     
     def _validate(self):
-        gen_batch_output = self.actor_rollout_wg.generate_sequences(self.test_gen_batch)
+        gen_batch_output_list = []
+        # breakpoint()
+        mini_bs = len(self.test_gen_batch) if len(self.test_gen_batch)< 64 else 64
+        print("Start validation on mini batch")
+        for i in range(len(self.test_gen_batch) // mini_bs):
+            gen_batch_output = self.actor_rollout_wg.generate_sequences(self.test_gen_batch[i*mini_bs:(i+1)*mini_bs])
+            gen_batch_output_list.append(gen_batch_output)
+            print("Current mini batch:", len(gen_batch_output_list))
+        print("Validation generation done!")
+        gen_batch_output = DataProto.concat(gen_batch_output_list)
+        del gen_batch_output_list
+        gc.collect()
+        # gen_batch_output = self.actor_rollout_wg.generate_sequences(self.test_gen_batch)
         code_batch, case_batch = gen_batch_output.chunk(2)
         reward_fn_kwargs = {
             'data': [code_batch, case_batch, self.test_data],
@@ -197,21 +209,22 @@ class CURERayPPOTrainer(RayPPOTrainer):
         self.global_steps += 1
         last_val_metrics = None
 
-        test_code_dataloader, test_case_dataloader, self.test_data = self._create_test_code_case_dataloader()
-        code_batch_dict = next(test_code_dataloader)
-        case_batch_dict = next(test_case_dataloader)
-        code_batch: DataProto = DataProto.from_single_dict(code_batch_dict)
-        case_batch: DataProto = DataProto.from_single_dict(case_batch_dict)
-        test_batch: DataProto = DataProto.concat([code_batch, case_batch])
-        test_batch_len = len(test_batch)
-        test_batch_len = test_batch_len // self.actor_rollout_wg.world_size * self.actor_rollout_wg.world_size  # make sure the batch size is divisible by world size
-        # test_batch = test_batch[:test_batch_len]  # prevent the last batch from being too small
-        # test_batch = test_batch[:64]  # prevent the last batch from being too small
-        print(f"test batch size: {len(test_batch)}")
-        self.test_gen_batch = test_batch.select(batch_keys=["input_ids", "attention_mask", "position_ids"], non_tensor_batch_keys=["raw_prompt_ids"])
-        self.test_gen_batch.meta_info["do_sample"] = True
-        print("start validating")
-        self._validate()
+        if self.config.trainer.val_before_train:
+            test_code_dataloader, test_case_dataloader, self.test_data = self._create_test_code_case_dataloader(data_len=16)
+            code_batch_dict = next(test_code_dataloader)
+            case_batch_dict = next(test_case_dataloader)
+            code_batch: DataProto = DataProto.from_single_dict(code_batch_dict)
+            case_batch: DataProto = DataProto.from_single_dict(case_batch_dict)
+            test_batch: DataProto = DataProto.concat([code_batch, case_batch])
+            test_batch_len = len(test_batch)
+            test_batch_len = test_batch_len // self.actor_rollout_wg.world_size * self.actor_rollout_wg.world_size  # make sure the batch size is divisible by world size
+            # test_batch = test_batch[:test_batch_len]  # prevent the last batch from being too small
+            # test_batch = test_batch[:64]  # prevent the last batch from being too small
+            print(f"test batch size: {len(test_batch)}")
+            self.test_gen_batch = test_batch.select(batch_keys=["input_ids", "attention_mask", "position_ids"], non_tensor_batch_keys=["raw_prompt_ids"])
+            self.test_gen_batch.meta_info["do_sample"] = True
+            print("start validating")
+            self._validate()
 
         while self.global_steps < self.config.cure.total_steps:
             data_len = self.config.data.train_batch_size * 2 - 1  # TODO: prevent the last batch from being too small, be carefull
@@ -221,11 +234,11 @@ class CURERayPPOTrainer(RayPPOTrainer):
             timing_raw = {}
 
             # 1. Handle code genration, we only need the first batch (because we previously sample more than a batch to avoid data length issues)
+            # breakpoint()
             code_batch_dict = next(code_dataloader)
             case_batch_dict = next(case_dataloader)
             code_batch: DataProto = DataProto.from_single_dict(code_batch_dict)
             case_batch: DataProto = DataProto.from_single_dict(case_batch_dict)
-
 
             batch: DataProto = DataProto.concat([code_batch, case_batch])  # TODO: we need to check if concat is right
             print(f"len(batch): {len(batch)}")

@@ -3,6 +3,7 @@ import ast
 import io
 import json
 import multiprocessing
+import subprocess
 import sys
 import time
 
@@ -262,6 +263,12 @@ def execute_scripts(num_chunks):
             ).item() / len(sub_test_table_i), "error"
             index_id += 1
 
+    # convert np to list
+    for i in range(len(data)):
+        if data[i]["all_case_exe_results"] is None:
+            continue
+        data[i]["all_case_bool_table"] = data[i]["all_case_bool_table"].tolist()
+
     with open("./results-execute.txt" if train else "./results-execute-test.txt", "a") as f:
         # Save + print
         def save_and_print(text):
@@ -274,9 +281,13 @@ def execute_scripts(num_chunks):
                 return 0
             return d1 / d2
 
+        bad_code_case = False
         code_acc = safe_divide(code_score, code_num)
         code_acc_acc = safe_divide(code_acc_score, code_acc_num)
         case_acc = safe_divide(case_score, case_num)
+        if code_acc <0.1 or case_acc<0.1:
+            print(f"{code_acc=}, {case_acc=}")
+            bad_code_case = True
         case_acc_acc = safe_divide(case_acc_score, case_acc_num)
         p_01 = safe_divide(p_01_score, p_01_num)
         p_00 = safe_divide(p_00_score, p_00_num)
@@ -293,12 +304,9 @@ def execute_scripts(num_chunks):
             acc_acc = stats[i]["BoN_acc_score"] / stats[i]["BoN_acc_num"]
             save_and_print(f"acc: {acc}, accumulate acc: {acc_acc}")
 
-    # convert np to list
-    for i in range(len(data)):
-        if data[i]["all_case_exe_results"] is None:
-            continue
-        data[i]["all_case_bool_table"] = data[i]["all_case_bool_table"].tolist()
-
+    if bad_code_case:
+        with open(f"./outputs-execute-{str(time.time())}-code-{str(code_acc)}-case-{str(case_acc)}.json", "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
     # output the data
     if train:
         with open("./outputs-execute.json", "w", encoding="utf-8") as f:

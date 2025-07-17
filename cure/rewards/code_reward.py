@@ -23,6 +23,7 @@ from transformers import AutoTokenizer
 from verl import DataProto
 from verl.protocol import DataProtoItem
 from verl.utils.dataset.rl_dataset import collate_fn
+from verl.workers.rollout.vllm_rollout.vllm_rollout_spmd import _pre_process_inputs
 
 
 def extract_code(full_output):
@@ -48,8 +49,8 @@ def modify(c):
 
 def extract_test_cases(full_output):
     # First, try extracting with the updated triple-backtick pattern
-    pattern_input_backticks = r'\*\*Test Input:\*\*\s*```(.*?)```'
-    pattern_output_backticks = r'\*\*Test Output:\*\*\s*```(.*?)```'
+    pattern_input_backticks = r'\*\*Test Input:\*\*\s*```input(.*?)```'
+    pattern_output_backticks = r'\*\*Test Output:\*\*\s*```output(.*?)```'
     matches_input = re.findall(pattern_input_backticks, full_output, re.DOTALL)
     matches_output = re.findall(pattern_output_backticks, full_output, re.DOTALL)
 
@@ -59,7 +60,7 @@ def extract_test_cases(full_output):
         test_input = [modify(matches_input[-1].lstrip('\n'))]
     else:
         # Fallback pattern without backticks: capture until **Test Output:**
-        pattern_input_plain = r'\*\*Test Input:\*\*\s*([\s\S]*?)(?=\*\*Test Output:\*\*)'
+        pattern_input_plain = r'\*\*Test Input:\*\*\s*```(.*?)```'
         matches_input_plain = re.findall(pattern_input_plain, full_output, re.DOTALL)
         if matches_input_plain:
             test_input = [modify(matches_input_plain[-1].strip())]
@@ -71,7 +72,7 @@ def extract_test_cases(full_output):
         test_output = [modify(matches_output[-1].lstrip('\n'))]
     else:
         # Fallback: capture until the **Explanation:** marker or end-of-string
-        pattern_output_plain = r'\*\*Test Output:\*\*\s*([\s\S]*?)(?=\*\*Explanation:|\*\*Test Input:|$)'
+        pattern_output_plain = r'\*\*Test Output:\*\*\s*```(.*?)```'
         matches_output_plain = re.findall(pattern_output_plain, full_output, re.DOTALL)
         if matches_output_plain:
             test_output = [modify(matches_output_plain[-1].strip())]
@@ -161,6 +162,7 @@ def code_reward_fn(
         for idx, code_b in enumerate(code_batch):
             code_text = tokenizer.decode(code_b.batch['responses'], skip_special_tokens=True)
             code_output = extract_code(code_text)
+            selected_data[idx//n_samples]["code_prompt"] = tokenizer.decode(_pre_process_inputs(tokenizer.pad_token_id, code_b.batch['prompts']), skip_special_tokens=False)
             selected_data[idx//n_samples]['full_code_generation'] = selected_data[idx//n_samples]['full_code_generation'] + [code_text]
             selected_data[idx//n_samples]['generated_code'] = selected_data[idx//n_samples]['generated_code'] + [code_output]
             selected_data[idx//n_samples]['code_response_length'].append(len(tokenizer.encode(code_text, add_special_tokens=False)))
@@ -169,6 +171,8 @@ def code_reward_fn(
         for idx, case_b in enumerate(case_batch):
             case_text = tokenizer.decode(case_b.batch['responses'], skip_special_tokens=True)
             test_input, test_output, example_text = extract_test_cases(case_text)
+            case_prompt = tokenizer.decode(_pre_process_inputs(tokenizer.pad_token_id, case_b.batch['prompts']), skip_special_tokens=False)
+            selected_data[idx // n_samples]["case_prompt"] = case_prompt
             selected_data[idx // n_samples]["full_case_generation"] = selected_data[idx // n_samples]["full_case_generation"] + [case_text]
             selected_data[idx // n_samples]["case_input"] = selected_data[idx // n_samples]["case_input"] + test_input
             selected_data[idx // n_samples]["case_output"] = selected_data[idx // n_samples]["case_output"] + test_output
