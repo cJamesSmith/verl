@@ -37,7 +37,12 @@ def run_ppo(config) -> None:
     if not ray.is_initialized():
         # this is for local ray cluster
         default_runtime_env = {
-            "env_vars": {"TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN", "VLLM_LOGGING_LEVEL": "WARN"}
+            "env_vars": {
+                "TOKENIZERS_PARALLELISM": "true",
+                "NCCL_DEBUG": "WARN",
+                "VLLM_LOGGING_LEVEL": "WARN",
+                "WANDB_API_KEY": "19b223a1c38826e6a11c642b3aa9cd30511eeb11",
+            }
         }
         ray_init_kwargs = config.ray_kwargs.get("ray_init", {})
         runtime_env_kwargs = ray_init_kwargs.get("runtime_env", {})

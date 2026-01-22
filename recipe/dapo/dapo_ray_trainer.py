@@ -97,6 +97,8 @@ class RayDAPOTrainer(RayPPOTrainer):
         # load checkpoint before doing anything
         self._load_checkpoint()
 
+        print(f"Using chat template: {self.tokenizer.chat_template}")
+
         # perform validation before training
         # currently, we only support validation using the reward_function.
         if self.val_reward_fn is not None and self.config.trainer.get("val_before_train", True):
