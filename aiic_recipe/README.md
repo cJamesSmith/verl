@@ -6,6 +6,18 @@
 
 ```bash
 sudo python3 -m pip uninstall bytedray -y && sudo python3 -m pip install --force-reinstall "ray[data,train,tune,serve]"
+sudo python3 -m pip uninstall grpcio -y && sudo python3 -m pip install grpcio
+sudo python3 -m pip uninstall byted-wandb -y && sudo python3 -m pip install wandb
+sudo python3 -m pip uninstall verl -y
+sudo python3 -m pip install protobuf
+sudo python3 -m pip install numba
+sudo python3 -m pip install sandbox_fusion
+sudo python3 -m pip install logfire
+sudo python3 -m pip install pydantic-core
+```
+
+```bash
+sudo python3 -m pip uninstall bytedray -y && sudo python3 -m pip install --force-reinstall "ray[data,train,tune,serve]"
 sudo python3 -m pip uninstall grpcio -y && sudo python3 -m pip install grpcio==1.62.1
 sudo python3 -m pip uninstall byted-wandb -y && sudo python3 -m pip install wandb==0.23.1
 sudo python3 -m pip uninstall verl -y
@@ -66,15 +78,17 @@ bash aiic_recipe/start_sandbox.sh --type terminal
 # Dense reward (passed/total)
 bash aiic_recipe/start_sandbox.sh
 
+bash aiic_recipe/start_ray.sh recipe/dapo/run_dapo_qwen3_8b_base_fast.sh Qwen/Qwen3-4B Qwen3-4B
+
 bash aiic_recipe/start_ray.sh aiic_recipe/train.sh \
     --entrypoint aiic_recipe.main \
-    --config_name trainer.yaml \
-    --project_name code_rl \
-    --exp_name debug-code-single-turn-qwen3-4b-instruct-2507-16k \
-    --model_path hdfs://harunava/home/byte_malia_gcp_aiic/user/codeai/hf_models/Qwen3-4B-Instruct-2507 \
-    --data_path /mnt/hdfs/tiktok_aiic/user/longtao.zheng/rl_datasets \
-    --train_data leetcode/train.jsonl \
-    --test_data leetcode/test.jsonl \
+    --config_name ppo_trainer.yaml \
+    --project_name qwen3_rl \
+    --exp_name Qwen3-4B-Base \
+    --model_path hdfs://harunava/home/byte_malia_gcp_aiic/user/codeai/hf_models/Qwen3-4B-Base \
+    --data_path /mnt/hdfs/tiktok_aiic/user/chenxianwei/datasets \
+    --train_data janus/train_simplerl.parquet \
+    --test_data janus/test_gsm8k.parquet janus/test_math500.parquet \
     --data_custom_cls_path aiic_recipe/dataset/code.py \
     --data_custom_cls_name SingleTurnCodeRLDataset \
     --reward_manager rate_limited \
