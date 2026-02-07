@@ -4,10 +4,10 @@ set -xeuo pipefail
 project_name='qwen3_rl'
 # MODEL_ID="Janus/HF-Qwen3-8B-tulumix-sft"
 # exp_name='1-16-HF-Qwen3-8B-tulumix-sft'
-# MODEL_ID="Qwen/Qwen3-8B-Base"
-# exp_name='1-16-Qwen3-8B-Base'
-MODEL_ID=$1
-exp_name=$2
+MODEL_ID="Qwen3-4B"
+exp_name='1-16-Qwen3-8B-Base'
+# MODEL_ID=$1
+# exp_name=$2
 
 adv_estimator=grpo
 
