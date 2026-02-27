@@ -1,0 +1,9 @@
+export WANDB_API_KEY=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
+export WANDB_ENTITY="stevez25-hong-kong-polytechnic-university"
+export NGPUS_PER_NODE=2
+export NNODES=$ARNOLD_WORKER_NUM
+export NODE_RANK=$ARNOLD_ID
+export MASTER_ADDR=$ARNOLD_WORKER_0_HOST
+export MASTER_PORT=$(echo $ARNOLD_WORKER_0_PORT | cut -d',' -f1)
+export KOOPMAN_DICT_DIR="/mnt/hdfs/tiktok_aiic/user/chenxianwei/checkpoints/ReLaX-Experiments"
+export VLLM_USE_V1=1
