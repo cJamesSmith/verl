@@ -2003,6 +2003,21 @@ def compute_policy_loss_geo_mean(
     return pg_loss, pg_metrics
 
 
+def _sampled_k3_kl(log_ratio: torch.Tensor) -> torch.Tensor:
+    """Low-variance sampled-token KL estimator for KL(old || new)."""
+
+    log_ratio = torch.clamp(log_ratio, min=-20.0, max=20.0)
+    return torch.exp(log_ratio) - 1.0 - log_ratio
+
+
+def _shifted_cummin(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Minimum previous valid value in each sequence, with 1.0 at the first token."""
+
+    masked_values = torch.where(mask > 0, values, torch.ones_like(values))
+    cummin = torch.cummin(masked_values, dim=-1).values
+    return torch.cat([torch.ones_like(cummin[:, :1]), cummin[:, :-1]], dim=-1)
+
+
 @register_policy_loss("cispo")
 def compute_policy_loss_cispo(
     old_log_prob: torch.Tensor,
@@ -2060,6 +2075,227 @@ def compute_policy_loss_cispo(
         "actor/pg_clipfrac": pg_clipfrac.detach().item(),
         "actor/ppo_kl": ppo_kl.detach().item(),
         "actor/pg_clipfrac_lower": pg_clipfrac_lower.detach().item(),
+    }
+    return pg_loss, pg_metrics
+
+
+@register_policy_loss("trm")
+def compute_policy_loss_trm(
+    old_log_prob: torch.Tensor,
+    log_prob: torch.Tensor,
+    advantages: torch.Tensor,
+    response_mask: torch.Tensor,
+    loss_agg_mode: str = "token-mean",
+    config: Optional[DictConfig | ActorConfig] = None,
+    rollout_is_weights: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    """Trust Region Masking with sequence-level rejection.
+
+    TRM keeps the GRPO/PPO clipped objective but drops trajectories whose sampled
+    token KL proxy indicates a large long-horizon policy mismatch.
+    """
+
+    assert config is not None
+    assert isinstance(config, ActorConfig)
+    assert config.policy_loss is not None
+
+    log_ratio = log_prob - old_log_prob
+    ratio = torch.exp(torch.clamp(log_ratio, min=-20.0, max=20.0))
+    ppo_kl = verl_F.masked_mean(-log_ratio, response_mask)
+    token_kl = _sampled_k3_kl(log_ratio).detach() * response_mask
+
+    seq_token_count = response_mask.sum(dim=-1).clamp(min=1)
+    seq_max_kl = token_kl.masked_fill(response_mask == 0, 0.0).max(dim=-1).values
+    valid_seq = seq_max_kl <= config.policy_loss.trm_max_kl
+    trm_avg_kl = config.policy_loss.trm_avg_kl
+    if trm_avg_kl is not None:
+        seq_avg_kl = token_kl.sum(dim=-1) / seq_token_count
+        valid_seq = valid_seq & (seq_avg_kl <= trm_avg_kl)
+    valid_mask = valid_seq.unsqueeze(-1).to(dtype=advantages.dtype) * response_mask
+
+    clip_ratio_low = config.clip_ratio_low if config.clip_ratio_low is not None else config.clip_ratio
+    clip_ratio_high = config.clip_ratio_high if config.clip_ratio_high is not None else config.clip_ratio
+    pg_losses1 = -advantages * ratio
+    pg_losses2 = -advantages * torch.clamp(ratio, 1 - clip_ratio_low, 1 + clip_ratio_high)
+    pg_losses = torch.maximum(pg_losses1, pg_losses2) * valid_mask
+
+    if rollout_is_weights is not None:
+        pg_losses = pg_losses * rollout_is_weights
+
+    pg_loss = agg_loss(
+        loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode, **config.global_batch_info
+    )
+    pg_clipfrac = verl_F.masked_mean(torch.gt(pg_losses2, pg_losses1).float(), response_mask)
+    trm_maskfrac = 1.0 - valid_seq.float().mean()
+    pg_metrics = {
+        "actor/pg_clipfrac": pg_clipfrac.detach().item(),
+        "actor/ppo_kl": ppo_kl.detach().item(),
+        "actor/trm_maskfrac": trm_maskfrac.detach().item(),
+        "actor/trm_seq_max_kl": seq_max_kl.mean().detach().item(),
+    }
+    return pg_loss, pg_metrics
+
+
+@register_policy_loss("minpro")
+def compute_policy_loss_minpro(
+    old_log_prob: torch.Tensor,
+    log_prob: torch.Tensor,
+    advantages: torch.Tensor,
+    response_mask: torch.Tensor,
+    loss_agg_mode: str = "token-mean",
+    config: Optional[DictConfig | ActorConfig] = None,
+    rollout_is_weights: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    """Minimum-prefix-ratio policy loss.
+
+    MinPRO approximates prefix importance correction with the minimum previous
+    token ratio, then uses the resulting clipped weight as a stop-gradient
+    multiplier for the log-probability objective.
+    """
+
+    assert config is not None
+    assert isinstance(config, ActorConfig)
+
+    log_ratio = log_prob - old_log_prob
+    ratio = torch.exp(torch.clamp(log_ratio, min=-20.0, max=20.0))
+    prefix_min_ratio = _shifted_cummin(ratio.detach(), response_mask)
+    prefix_ratio = prefix_min_ratio * ratio
+
+    clip_ratio_low = config.clip_ratio_low if config.clip_ratio_low is not None else config.clip_ratio
+    clip_ratio_high = config.clip_ratio_high if config.clip_ratio_high is not None else config.clip_ratio
+    clipped_prefix_ratio = torch.clamp(prefix_ratio, 1 - clip_ratio_low, 1 + clip_ratio_high).detach()
+    pg_losses = -clipped_prefix_ratio * advantages * log_prob
+
+    if rollout_is_weights is not None:
+        pg_losses = pg_losses * rollout_is_weights
+
+    pg_loss = agg_loss(
+        loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode, **config.global_batch_info
+    )
+    prefix_ratio_clipped = torch.clamp(prefix_ratio, 1 - clip_ratio_low, 1 + clip_ratio_high)
+    pg_clipfrac = verl_F.masked_mean((prefix_ratio != prefix_ratio_clipped).float(), response_mask)
+    ppo_kl = verl_F.masked_mean(-log_ratio, response_mask)
+    pg_metrics = {
+        "actor/pg_clipfrac": pg_clipfrac.detach().item(),
+        "actor/ppo_kl": ppo_kl.detach().item(),
+        "actor/minpro_prefix_ratio": verl_F.masked_mean(prefix_min_ratio, response_mask).detach().item(),
+    }
+    return pg_loss, pg_metrics
+
+
+@register_policy_loss("cppo")
+def compute_policy_loss_cppo(
+    old_log_prob: torch.Tensor,
+    log_prob: torch.Tensor,
+    advantages: torch.Tensor,
+    response_mask: torch.Tensor,
+    loss_agg_mode: str = "token-mean",
+    config: Optional[DictConfig | ActorConfig] = None,
+    rollout_is_weights: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    """Cumulative-position-aware policy loss.
+
+    CPPO masks updates that would continue to move away from the rollout policy
+    after either a weighted token divergence or cumulative prefix budget is
+    exceeded. Earlier positions receive larger weights.
+    """
+
+    assert config is not None
+    assert isinstance(config, ActorConfig)
+    assert config.policy_loss is not None
+
+    log_ratio = log_prob - old_log_prob
+    log_ratio_clamped = torch.clamp(log_ratio, min=-20.0, max=20.0)
+    ratio = torch.exp(log_ratio_clamped)
+    token_kl = _sampled_k3_kl(log_ratio).detach()
+
+    seq_len = response_mask.shape[-1]
+    positions = torch.arange(seq_len, device=response_mask.device, dtype=advantages.dtype)
+    remaining = (seq_len - positions).clamp(min=1.0)
+    weights = remaining.pow(config.policy_loss.cppo_position_weight_power)
+    weights = weights / weights.mean().clamp(min=1e-8)
+
+    weighted_kl = token_kl * weights.unsqueeze(0)
+    cumulative_kl = (weighted_kl * response_mask).cumsum(dim=-1)
+    cumulative_weight = (weights.unsqueeze(0) * response_mask).cumsum(dim=-1).clamp(min=1e-8)
+    token_valid = weighted_kl <= config.policy_loss.cppo_token_kl
+    prefix_limit = config.policy_loss.cppo_token_kl + config.policy_loss.cppo_prefix_kl * cumulative_weight
+    prefix_valid = cumulative_kl <= prefix_limit
+
+    away_from_old = torch.where(advantages > 0, ratio > 1.0, ratio < 1.0)
+    valid_mask = torch.where(away_from_old, token_valid & prefix_valid, torch.ones_like(token_valid))
+    valid_mask = valid_mask.detach().to(dtype=advantages.dtype) * response_mask
+
+    clipped_ratio = ratio.detach()
+    pg_losses = -clipped_ratio * advantages * log_prob * valid_mask
+
+    if rollout_is_weights is not None:
+        pg_losses = pg_losses * rollout_is_weights
+
+    pg_loss = agg_loss(
+        loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode, **config.global_batch_info
+    )
+    pg_clipfrac = verl_F.masked_mean((1.0 - valid_mask).float(), response_mask)
+    ppo_kl = verl_F.masked_mean(-log_ratio, response_mask)
+    pg_metrics = {
+        "actor/pg_clipfrac": pg_clipfrac.detach().item(),
+        "actor/ppo_kl": ppo_kl.detach().item(),
+        "actor/cppo_weighted_kl": verl_F.masked_mean(weighted_kl, response_mask).detach().item(),
+    }
+    return pg_loss, pg_metrics
+
+
+@register_policy_loss("sis")
+def compute_policy_loss_sis(
+    old_log_prob: torch.Tensor,
+    log_prob: torch.Tensor,
+    advantages: torch.Tensor,
+    response_mask: torch.Tensor,
+    loss_agg_mode: str = "token-mean",
+    config: Optional[DictConfig | ActorConfig] = None,
+    rollout_is_weights: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, dict[str, Any]]:
+    """Selective importance sampling policy loss.
+
+    SIS accepts tokens whose old-policy samples can be treated as on-policy under
+    an envelope approximation; accepted tokens use weight 1 and rejected tokens
+    keep the clipped IS correction.
+    """
+
+    assert config is not None
+    assert isinstance(config, ActorConfig)
+    assert config.policy_loss is not None
+
+    log_ratio = log_prob - old_log_prob
+    ratio = torch.exp(torch.clamp(log_ratio, min=-20.0, max=20.0))
+    envelope = max(config.policy_loss.sis_envelope, 1e-8)
+    accept_prob = torch.clamp(ratio.detach() / envelope, max=1.0)
+    if config.policy_loss.sis_acceptance == "stochastic":
+        accept = torch.rand_like(accept_prob) < accept_prob
+    elif config.policy_loss.sis_acceptance == "deterministic":
+        accept = accept_prob >= 1.0
+    else:
+        raise ValueError(f"Unsupported SIS acceptance mode: {config.policy_loss.sis_acceptance}")
+    accept = accept & (response_mask > 0)
+
+    clip_ratio_low = config.clip_ratio_low if config.clip_ratio_low is not None else config.clip_ratio
+    clip_ratio_high = config.clip_ratio_high if config.clip_ratio_high is not None else config.clip_ratio
+    clipped_ratio = torch.clamp(ratio, 1 - clip_ratio_low, 1 + clip_ratio_high)
+    sis_weight = torch.where(accept, torch.ones_like(ratio), clipped_ratio).detach()
+    pg_losses = -sis_weight * advantages * log_prob
+
+    if rollout_is_weights is not None:
+        pg_losses = pg_losses * rollout_is_weights
+
+    pg_loss = agg_loss(
+        loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode, **config.global_batch_info
+    )
+    pg_clipfrac = verl_F.masked_mean((ratio != clipped_ratio).float() * (~accept).float(), response_mask)
+    ppo_kl = verl_F.masked_mean(-log_ratio, response_mask)
+    pg_metrics = {
+        "actor/pg_clipfrac": pg_clipfrac.detach().item(),
+        "actor/ppo_kl": ppo_kl.detach().item(),
+        "actor/sis_accept_rate": verl_F.masked_mean(accept.float(), response_mask).detach().item(),
     }
     return pg_loss, pg_metrics
 

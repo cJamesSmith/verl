@@ -82,12 +82,20 @@ class PolicyLossConfig(BaseConfig):
     The inheritance from BaseConfig provides omegaconf.DictConfig-like interface for a dataclass config.
 
     Args:
-        loss_mode (str): Loss function mode. Options: 'vanilla', 'clip-cov', 'kl-cov', 'gpg'.
+        loss_mode (str): Loss function mode. Options include 'vanilla', 'clip-cov', 'kl-cov', 'gpg',
+            'cispo', 'trm', 'minpro', 'dppo_tv', 'dppo_kl', 'cppo', and 'sis'.
         clip_cov_ratio (float): Ratio of tokens to be clipped for clip-cov loss.
         clip_cov_lb (float): Lower bound for clip-cov loss.
         clip_cov_ub (float): Upper bound for clip-cov loss.
         kl_cov_ratio (float): Ratio of tokens to be applied KL penalty for kl-cov loss.
         ppo_kl_coef (float): KL divergence penalty coefficient.
+        trm_max_kl (float): TRM maximum sampled token KL threshold for accepting a sequence.
+        trm_avg_kl (Optional[float]): Optional TRM average sampled token KL threshold.
+        cppo_token_kl (float): CPPO per-token weighted KL threshold.
+        cppo_prefix_kl (float): CPPO cumulative prefix-average KL budget.
+        cppo_position_weight_power (float): Exponent for CPPO early-token position weights.
+        sis_envelope (float): SIS envelope used to accept stale tokens as on-policy.
+        sis_acceptance (str): SIS acceptance mode, either 'deterministic' or 'stochastic'.
         rollout_correction (RolloutCorrectionConfig): Configuration for rollout correction.
     """
 
@@ -97,6 +105,13 @@ class PolicyLossConfig(BaseConfig):
     clip_cov_ub: float = 5.0
     kl_cov_ratio: float = 0.0002
     ppo_kl_coef: float = 0.1
+    trm_max_kl: float = 0.05
+    trm_avg_kl: Optional[float] = None
+    cppo_token_kl: float = 0.05
+    cppo_prefix_kl: float = 0.01
+    cppo_position_weight_power: float = 1.0
+    sis_envelope: float = 2.0
+    sis_acceptance: str = "deterministic"
     rollout_correction: RolloutCorrectionConfig = field(default_factory=RolloutCorrectionConfig)
 
 

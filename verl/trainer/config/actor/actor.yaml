@@ -75,6 +75,27 @@ policy_loss:
   # KL divergence penalty coefficient
   ppo_kl_coef: 0.1
 
+  # TRM sequence-level maximum token KL threshold
+  trm_max_kl: 0.05
+
+  # TRM optional sequence-average token KL threshold
+  trm_avg_kl: null
+
+  # CPPO per-token weighted KL threshold
+  cppo_token_kl: 0.05
+
+  # CPPO cumulative prefix-average KL budget
+  cppo_prefix_kl: 0.01
+
+  # CPPO position-weight exponent; larger values tighten earlier tokens more
+  cppo_position_weight_power: 1.0
+
+  # SIS envelope for accepting stale tokens as on-policy
+  sis_envelope: 2.0
+
+  # SIS acceptance mode: deterministic or stochastic
+  sis_acceptance: deterministic
+
 # Constant C in Dual-clip PPO; clips when advantage < 0 and ratio > C
 clip_ratio_c: 3.0
 
